@@ -1,0 +1,331 @@
+# The useful packages are imported
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from math import sqrt
+import seaborn as sns
+# Import of scikit-learn's packages
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import QuantileTransformer
+from sklearn import datasets
+from sklearn.model_selection import train_test_split
+from sklearn.datasets import make_regression
+from sklearn.cluster import KMeans
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import ConstantKernel, RBF
+from sklearn import neural_network
+from sklearn import metrics
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import GridSearchCV
+# Import the packages for neural networks
+from tensorflow import keras
+from keras.models import Sequential
+from keras.layers.core import Activation, Dense
+from keras.layers import Dropout
+from tensorflow.keras import layers
+from tensorflow.keras import activations
+from keras.callbacks import EarlyStopping
+from scikeras.wrappers import KerasClassifier
+import xgboost as xgb
+import tensorflow as tf
+import scipy.optimize as opt
+import warnings
+
+warnings.filterwarnings("ignore")
+
+# We use the pandas library to read the csv file
+# This library can read csv files and store them in a dataframe
+dt = pd.read_csv(
+    r"C:\Users\zakar\PycharmProjects\entertainment\Stage_ZH\Dataset\STEADY-clustered-flamelet-H2-state-space.csv")
+names = pd.read_csv(
+    r"C:\Users\zakar\PycharmProjects\entertainment\Stage_ZH\Dataset\STEADY-clustered-flamelet-H2-state-space-names.csv",
+    header=None)
+dt.columns = names[0].values
+print('Dimension of the data = ', dt.shape)
+dt.head()
+
+# As you can see, the data have 13649 rows and 12 columns
+# Each column represents a variable of the simulation (e.g. temperature, H2, ...)
+# Each row represents its value at a given point
+# This dataset is a simple simulation of hydrogen combustion
+
+# Each point is also characterized by the reaction rate
+dr = pd.read_csv(
+    r"C:\Users\zakar\PycharmProjects\entertainment\Stage_ZH\Dataset\STEADY-clustered-flamelet-H2-state-space-sources"
+    r".csv")
+dr.columns = names[0].values
+print('Dimension of the data = ', dr.shape)
+dr.head()
+
+# In this matrix we have the same variables, but dr represent the reaction rates
+# The speed of the reaction is the derivative of the concentration of the species
+# So this matrix is in J/(s m3) for the temperature (also called heat release rate)
+# and in kg/(s m3) for the species
+
+'''
+# We can plot the data to see how they are distributed
+fig, ax = plt.subplots(figsize=(6, 4))
+sc = ax.scatter(dt['T'], dr['T'], c=dt['OH'], cmap='jet', s=1, alpha=0.8)
+ax.set_xlabel('T [K]')
+ax.set_ylabel('heat release rate [J/(s m3)]')
+# Colorbar
+cbar = fig.colorbar(sc, ax=ax)
+cbar.set_label('OH [mass fraction]')
+'''
+# As you can see, the data are not linearly distributed
+# and we need a complex model to represent them (nonlinear regression)
+
+# Now I will prepare for you the matrix X and the vector y
+# X will be the matrix of the data (without the reaction rates)
+# y will be the vector of the reaction rates in the PCA space
+X = dt.values[:, :-3]  # temperature and species
+names_red = names[0].values[:-3]  # We exclude N2, AR and HE because they do not react
+print('Dimension of X = ', X.shape)
+y = dr.values[:, :-3]  # reaction rates
+names_red = names[0].values[:-3]  # We exclude N2, AR and HE because they do not react
+print('Dimension of y = ', y.shape)
+
+'''
+# We scale the datas with StandardScaler and we apply the PCA algorithm
+scaler = StandardScaler()
+X2 = scaler.fit_transform(X)
+pca = PCA(0.95)
+X_pca = pca.fit_transform(X2)
+print('Dimension of X reduced = ', X_pca.shape)         # We can see we have now 5 columns
+'''
+
+# We can compare StandardScaler with MinMAxScaler and as we can see with MinMaxScaler we have 4 columns.
+# The explained variance ratio also reach faster to 0 than StandardScaler. In addition, it does not change the
+# value of k for k-means. If we scale also y the regression will be better than without scaling.
+scaler = MinMaxScaler()
+scaler2 = StandardScaler()
+qt = QuantileTransformer()
+X_scaled = scaler.fit_transform(X)
+print('X_scaled : ', X_scaled.shape)
+pca = PCA(0.99)
+X_pca = pca.fit_transform(X_scaled)
+print('Dimension of X reduced = ', X_pca.shape)
+Y_reg = pca.transform(scaler.transform(y))  # We have now 6 columns instead of 9
+print('Y_reg : ', Y_reg.shape)
+Y_reg_trans = qt.fit_transform(Y_reg.reshape(-1, 6))  # We use Quantile Transformer because we have a gaussian distribution
+print('Y_reg_trans : ', Y_reg_trans.shape)
+Y_reg_trans_scal = scaler2.fit_transform(Y_reg_trans)  # We scale also y with minmax to be coherent
+print('Dimension of Y reduced = ', Y_reg_trans_scal.shape)
+
+'''
+# We plot the explained variance ratio and a scatter plot of the first two components colored by the temperature.
+ratio = pca.explained_variance_ratio_
+plt.plot(ratio)
+plt.title('Graph showing the variance ratio of X reduced in function of the number of the component')
+plt.xlabel('Number of the component with its variance')
+plt.ylabel('Explained variance ratio')
+plt.show()
+
+plt.scatter(X_pca[:, 0], X_pca[:, 1], c=X_pca[:, 0], s=5)
+plt.title('Plot of the first two components with their temperature')
+plt.colorbar()
+plt.show()
+'''
+# Let us apply the k-mean clustering. First we need to know the value of k. We use then the elbow method.
+inertia = []  # List inertia
+k_list = range(2, 10)  # k changes between 1 and 10
+for k in k_list:
+    # k-mean is used for a given k
+    kmeans = KMeans(n_clusters=k)
+    kmeans.fit(X_pca)
+    # We save the inertia we obtained
+    inertia.append(kmeans.inertia_)
+'''
+# We plot the results and it seems that k = 5 is a good result
+plt.plot(range(2, 10), inertia)
+plt.title("Elbow's method")
+plt.xlabel("Number of cluster")
+plt.ylabel("Inertia")
+plt.show()
+'''
+# We apply k-means algorithm
+kmeans = KMeans(n_clusters=5)
+model = kmeans.fit(X_pca)
+labels = kmeans.labels_
+'''
+# Let's plot the result. With different k we have k cluster and so bigger is k less is the inertia.
+sns.set()
+plt.scatter(X_pca[:, 0], X_pca[:, 1], c=kmeans.labels_, s=5)
+plt.title('K-Means Classification of the datas')
+plt.show()
+'''
+### The nonlinear regression can be applied on each cluster ###
+X_reg = X_pca
+
+'''
+plt.scatter(X_reg[:, 0], Y_reg[:, 0], c=X_reg[:, 0], s=5)
+plt.title('Plot of the first PCA component and its reaction rate with their temperature')
+plt.colorbar()
+plt.show()
+'''
+# Splitting of data into training and tests
+xtrain, xtest, ytrain, ytest = train_test_split(X_reg, Y_reg_trans_scal, test_size=0.20)  # for regression with clusters
+gpr = GaussianProcessRegressor(
+    n_restarts_optimizer=10)  # Loss test et validation sur chaque cluster avec MSE en fonction de k
+gpr_train = gpr.fit(xtrain, ytrain)
+
+
+'''
+# xtrain2, xtest2, ytrain2, ytest2 = train_test_split(X2_minmax, Y[:, 0], test_size=0.20)
+#Yp = scaler2.inverse_transform(y_pred)
+Y_normal = qt.inverse_transform(Yp)
+
+# The first algorithm used is the Random Forest Regression that works with probabilities
+rf = RandomForestRegressor(n_estimators=100)
+rf.fit(xtrain, ytrain)
+prediction = rf.predict(xtest)        # We make prediction with the others values in X
+mse = mean_squared_error(ytest, prediction)
+rmse = np.sqrt(mean_squared_error(ytest, prediction))
+score = rf.score(xtrain, ytrain)
+print(mse)
+print(rmse)         # RMSE = 79005.74100458654
+print(score)        # As we can see the score is 0.999 which is a great value
+'''
+
+'''
+# The second algorithm is with tensorflow, we add input layer, output layer and hidden layers.
+# We choose the relu function because it is efficient and simple. 
+neurone = Sequential()
+neurone.add(Dense(16, input_dim=xtrain.shape[1], activation="relu"))
+#neurone.add(Dropout(0.2))                           # The dropping of some neural avoids overfitting
+neurone.add(Dense(16, activation="relu"))
+neurone.add(Dense(1))
+neurone.compile(loss="mean_squared_error", optimizer="adam", metrics=["accuracy"])
+
+early_stopping = EarlyStopping(monitor="loss", patience=3)    # When the loss becomes big we stop the learning
+history = neurone.fit(xtrain, ytrain, epochs=50, callbacks=[early_stopping], validation_data=(xtest, ytest))
+
+# We can plot the losses of training and of validation to compare them.
+loss = history.history['loss']
+val_loss = history.history['val_loss']
+epochs = range(1, len(loss) + 1)
+plt.plot(epochs, loss, 'y', label='Training loss')
+plt.plot(epochs, val_loss, 'r', label='Validation loss')
+plt.title('Training and validation loss')
+plt.xlabel('Epochs')
+plt.ylabel('Loss')
+plt.legend()
+plt.show()
+
+pred = neurone.predict(xtest)
+rmse = np.sqrt(metrics.mean_squared_error(pred, ytest))
+print(" RMSE : {}".format(rmse))  # RMSE = 0.00673
+'''
+'''
+# A more complex algorithm is the gaussian regression. This is the most accuracy method and is simpler than NN.
+gpr = GaussianProcessRegressor(n_restarts_optimizer=10)
+gpr.fit(xtrain, ytrain)
+score = gpr.score(xtest, ytest)
+print('The score :', score)  # Great score of 0.99999
+
+# We evaluate the model
+y_pred = gpr.predict(xtest)
+rmse = np.sqrt(metrics.mean_squared_error(y_pred, ytest))
+print('The rmse value :', rmse)  # RMSE = 61.39
+
+# We compare the predictions with the training data and we see that the algorithm is efficient.
+plt.plot(xtrain, ytrain, 'ro', label='Training data')
+plt.plot(xtest, y_pred, 'b-', label='Predicted values')
+plt.legend()
+plt.title('Training vs Prediction')
+plt.show()
+'''
+'''
+### The last algorithm used is with XGBoost. This algorithm is simple but we can not customize it. ### 
+xgbr = xgb.XGBRegressor(verbosity=0)
+xgbr.fit(xtrain, ytrain)
+
+score = xgbr.score(xtrain, ytrain)           # We have a score of 0.9998
+print("Training score: ", score)
+
+ypred = xgbr.predict(xtest)
+mse = mean_squared_error(ytest, ypred)
+print("MSE: %.2f" % mse)
+print("RMSE: %.2f" % (mse ** (1 / 2.0)))          # The value of RMSE is 149728.27
+
+x_ax = range(len(ytest))
+plt.scatter(x_ax, ytest, s=5, color="blue", label="original")
+plt.plot(x_ax, ypred, lw=0.8, color="red", label="predicted")
+plt.title("Plot of datas vs regression")
+plt.xlabel('X_reg')
+plt.ylabel('First column of Y_reg')
+plt.legend()
+plt.show()
+'''
+
+mse_values = []
+
+# We apply gaussian regression on each cluster
+for i in range(5):
+    cluster_X = X_reg[labels == i]
+    cluster_y = Y_reg_trans_scal[labels == i]
+    gpr.fit(cluster_X, cluster_y)
+    cluster_y_pred = gpr.predict(cluster_X)
+    y_pred = gpr.predict(X_reg)
+    scaler2.inverse_transform(y_pred)
+    qt.inverse_transform(y_pred)
+    plt.scatter(cluster_X, cluster_y)
+    plt.scatter(X_reg, Y_reg, color='blue', label='Real data', s=5)
+    plt.scatter(X_reg, y_pred, color='red', label='Data predicted', s=5)
+    plt.title('GPR regression with k-means clustering')
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.legend(loc='upper left')
+    plt.show()
+    mse = mean_squared_error(cluster_y, cluster_y_pred)
+    mse_values.append(mse)
+    print('mse :', mse_values)
+
+'''
+# Regression with gpr on all of the data without clustering 
+gpr = GaussianProcessRegressor(n_restarts_optimizer=10)
+model2 = gpr.fit(X_reg, Y_reg)
+plt.scatter(X_reg, Y_reg)
+y_pred, sigma = gpr.predict(X_reg, return_std=True)
+plt.scatter(X_reg, Y_reg, color='blue', label='Real data', s=5)
+plt.scatter(X_reg, y_pred, color='red', label='Data predicted', s=5)
+plt.title('GPR regression without clustering')
+plt.xlabel('X')
+plt.ylabel('Y')
+plt.legend(loc='upper left')
+plt.show()
+print('score :', model2.score(X_reg, Y_reg))
+'''
+'''
+n = []
+mse_values2 = []
+
+for i in range(1, 31):
+    n.append(i)
+print(n)
+
+
+# Calculer le MSE pour chaque nombre de clusters
+for k in n:
+    # Créer un modèle K-means
+    kmeans = KMeans(n_clusters=k, random_state=42)
+    kmeans.fit(X_reg)
+    # Prédire les clusters pour les données
+    labels = kmeans.predict(X_reg)
+    # Calculer le MSE
+    mse = mean_squared_error(X_reg, kmeans.cluster_centers_[labels])
+    mse_values2.append(mse)
+
+# Afficher le graphe
+plt.plot(n, mse_values2, marker='o')
+plt.xlabel('Nombre de clusters')
+plt.ylabel('Mean Square Error (MSE)')
+plt.title('MSE en fonction du nombre de clusters')
+plt.show()
+
+'''
+
+
